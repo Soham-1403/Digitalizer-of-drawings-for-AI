@@ -18,7 +18,8 @@ from engine.cad.coords import (
     point_px_to_units,
     px_to_units_scale,
 )
-from engine.cad.layers import STRUCTURAL_LAYER_STANDARD, hex_to_rgb
+from engine.cad.layer_registry import get_layer_standard
+from engine.cad.layers import hex_to_rgb
 from engine.model import Entity, EntityType, VectorDocument
 
 XDATA_APPID = "DIGITALIZER"
@@ -30,7 +31,7 @@ def _ensure_appid(doc) -> None:
 
 
 def _ensure_layers(doc) -> None:
-    for category, spec in STRUCTURAL_LAYER_STANDARD.items():
+    for category, spec in get_layer_standard().items():
         name = category.value
         if name in doc.layers:
             continue

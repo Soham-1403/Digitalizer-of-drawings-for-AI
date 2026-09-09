@@ -314,19 +314,124 @@ def run_pipeline(source_path: str, out_dir: str, config: PipelineConfig | None =
     return document
 
 
+SUPPORTED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
+
+
+def discover_batch_files(directory: str, recursive: bool = False) -> list[str]:
+    """Find every supported drawing file under `directory` — for a firm
+    pointing this tool at a legacy archive folder rather than uploading
+    one file at a time.
+    """
+    found = []
+    walker = os.walk(directory) if recursive else [(directory, [], os.listdir(directory))]
+    for root, _dirs, files in walker:
+        for name in sorted(files):
+            if os.path.splitext(name)[1].lower() in SUPPORTED_EXTENSIONS:
+                found.append(os.path.join(root, name))
+        if not recursive:
+            break
+    return sorted(found)
+
+
+@dataclass
+class BatchFileResult:
+    source_path: str
+    success: bool
+    page_count: int = 0
+    dxf_path: str | None = None
+    pdf_path: str | None = None
+    error: str | None = None
+
+
+def run_batch(
+    paths: list[str],
+    out_dir: str,
+    config: PipelineConfig,
+    audit_log_path: str | None = None,
+) -> list[BatchFileResult]:
+    """Digitize every file in `paths` unattended, continuing past a
+    single file's failure rather than aborting the whole archive run —
+    one corrupt/unreadable legacy scan should not stop the other 500
+    from processing.
+    """
+    from engine.cad.dxf_writer import write_dxf
+    from engine.cad.pdf_writer import write_pdf
+
+    results: list[BatchFileResult] = []
+    for path in paths:
+        stem = os.path.splitext(os.path.basename(path))[0]
+        file_out_dir = os.path.join(out_dir, stem)
+        try:
+            document = run_pipeline(path, file_out_dir, config)
+            dxf_path = write_dxf(document, os.path.join(file_out_dir, "output.dxf"))
+            pdf_path = write_pdf(document, os.path.join(file_out_dir, "output.pdf"))
+            result = BatchFileResult(
+                source_path=path, success=True, page_count=len(document.pages), dxf_path=dxf_path, pdf_path=pdf_path
+            )
+        except Exception as exc:  # noqa: BLE001 - one bad file must not kill the batch
+            result = BatchFileResult(source_path=path, success=False, error=str(exc))
+
+        results.append(result)
+
+        if audit_log_path:
+            from engine.audit import log_event
+
+            log_event(
+                audit_log_path,
+                "batch_file_digitized" if result.success else "batch_file_failed",
+                {"source_path": path, "page_count": result.page_count, "error": result.error},
+            )
+
+    return results
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Digitize a scanned/PDF drawing into DXF + PDF (headless).")
-    parser.add_argument("source", help="Path to a PDF or image file.")
+    parser = argparse.ArgumentParser(
+        description="Digitize scanned/PDF drawings into DXF + PDF (headless). "
+        "Pass a single file, or a directory to batch-process every supported file in it."
+    )
+    parser.add_argument("source", help="Path to a PDF/image file, or a directory for batch mode.")
     parser.add_argument("--out", default="out", help="Output directory.")
     parser.add_argument("--ai-assist", action="store_true", help="Enable Claude-vision fallback assist.")
     parser.add_argument("--units", default="mm", choices=["mm", "in"])
+    parser.add_argument("--recursive", action="store_true", help="In batch mode, search subdirectories too.")
+    parser.add_argument("--layer-standard", help="Path to a firm CAD-standard JSON override (see docs/layer_standard.md).")
+    parser.add_argument("--confidence-threshold", type=float, default=None, help="Override the LLM-fallback confidence threshold.")
     args = parser.parse_args()
 
+    if args.layer_standard:
+        from engine.cad.layer_registry import load_layer_standard_from_file
+
+        load_layer_standard_from_file(args.layer_standard)
+
     config = PipelineConfig(units=args.units, ai_assist_enabled=args.ai_assist)
+    if args.confidence_threshold is not None:
+        config.confidence_threshold = args.confidence_threshold
     if args.ai_assist:
         from engine.llm_assist.claude_vision import ClaudeVisionProvider
 
         config.ai_provider = ClaudeVisionProvider()
+
+    if os.path.isdir(args.source):
+        from engine.audit import default_log_path
+
+        paths = discover_batch_files(args.source, recursive=args.recursive)
+        if not paths:
+            print(f"No supported files found in {args.source}")
+            return
+        print(f"Found {len(paths)} file(s) to digitize.")
+
+        audit_log_path = default_log_path(args.out)
+        results = run_batch(paths, args.out, config, audit_log_path=audit_log_path)
+
+        succeeded = [r for r in results if r.success]
+        failed = [r for r in results if not r.success]
+        for r in succeeded:
+            print(f"OK   {r.source_path} -> {r.page_count} page(s), {r.dxf_path}")
+        for r in failed:
+            print(f"FAIL {r.source_path}: {r.error}")
+        print(f"\n{len(succeeded)} succeeded, {len(failed)} failed. Audit log: {audit_log_path}")
+        return
 
     document = run_pipeline(args.source, args.out, config)
 

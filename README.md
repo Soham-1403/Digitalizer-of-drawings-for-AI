@@ -58,6 +58,25 @@ always tell what came from where before signing off.
 - Project files bundle the source pages, vector model, annotations, and
   edit history so work can be saved/resumed and audited later.
 
+## Built for an engineering firm's actual process, not just the demo
+
+- **Bring your own CAD standard** — layer names/colors/lineweights load
+  from a JSON config (**Settings → Load Firm CAD Standard…**), so this
+  doesn't replace a firm's existing standards manual.
+- **Engineer sign-off, separate from confidence score** — a page must be
+  explicitly marked reviewed by a named reviewer; editing it afterward
+  clears that sign-off; exporting an unreviewed/low-confidence page
+  requires an explicit "export anyway."
+- **Local audit log** — every digitize/review/export/AI-assist-invoked
+  event is timestamped and attributed, for QA/compliance traceability.
+- **Batch/unattended CLI** — `python -m engine.pipeline <folder> --out <out>`
+  digitizes an entire legacy archive folder, skipping past any single
+  corrupt file rather than aborting.
+- **Explicit, documented data-handling posture** — nothing leaves the
+  machine unless AI-assist is opted into per document; see
+  `ARCHITECTURE.md` §7 for exactly what's sent, when, and how to stay
+  fully offline for confidential projects.
+
 ## Repository layout
 
 ```
@@ -109,6 +128,12 @@ python -m app.main
 
 # Or run the engine headlessly (useful for batch jobs / CI / testing)
 python -m engine.pipeline path/to/drawing.pdf --out out/
+
+# Batch-digitize an entire legacy archive folder, unattended
+python -m engine.pipeline path/to/archive_folder/ --out out/ --recursive
+
+# Use your firm's own CAD layer/color standard instead of the built-in default
+python -m engine.pipeline path/to/drawing.pdf --out out/ --layer-standard config/layer_standard.example.json
 ```
 
 LLM-vision assist requires an Anthropic API key:

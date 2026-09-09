@@ -153,3 +153,93 @@ came from the pipeline versus what a human flagged.
 - **Save re-runs export**, not just the in-memory view — so the DXF/PDF
   a firm hands to a client always matches the last thing a human looked
   at on screen, with no separate "remember to re-export" step to forget.
+
+## 7. Enterprise deployment: data handling, sign-off, and audit
+
+An MNC structural/consulting firm's requirements go beyond "does the
+vectorization work" — client confidentiality, professional liability,
+and its own CAD standards all constrain what a usable tool looks like.
+
+### 7.1 What leaves the machine, and when
+
+This is a **local desktop application**. By default, nothing leaves the
+machine — the entire deterministic pipeline (preprocessing,
+vectorization, classification, confidence scoring, DXF/PDF export) runs
+locally with no network calls at all.
+
+Data leaves the machine **only** when AI-vision assist is explicitly
+enabled for a given document (a per-document checkbox at upload time,
+never a global default), and even then, only:
+
+- the raster image of the specific page/region being processed, and
+- a short text summary of what the deterministic pass already found
+  (layer counts, confidence) plus any markup notes,
+
+sent to Anthropic's API over HTTPS for that one page/region, at the
+moment a low-confidence auto-fallback or an explicit "reprocess with AI"
+click triggers it — not the whole document, not proactively, not as
+telemetry. Every such call is a distinct entry in the local audit log
+(`ai_assist_invoked`) so it's traceable after the fact.
+
+**For maximum-confidentiality projects, leave AI-assist off.** Every
+feature — vectorization, editing, layer/confidence review, DXF/DWG/PDF
+export — works fully offline in that mode; AI-assist is additive, never
+required.
+
+There is no telemetry or analytics collection built into this
+application itself. Anthropic's own data usage and retention terms
+govern anything sent to its API when AI-assist is used; a firm should
+have its own legal/IT/security review confirm those terms (including
+any available enterprise data-handling agreement) satisfy its client
+confidentiality obligations *before* enabling AI-assist on
+client-sensitive drawings — this codebase doesn't (and can't) make that
+determination.
+
+### 7.2 API key handling
+
+`ANTHROPIC_API_KEY` is read from the environment at runtime; it is never
+written into a project file, the audit log, or any exported file. For a
+firm-wide rollout, IT should provision it via the OS/corporate config on
+managed machines rather than having individual engineers paste a key
+into a shell profile.
+
+### 7.3 Professional sign-off, not just a confidence score
+
+A confidence score is the pipeline's own self-assessment — it is
+deliberately **not** treated as equivalent to an engineer's review. See
+`engine/review.py`: every page carries an explicit `reviewed_by` /
+`reviewed_at` / `review_notes` record, set only by a human via **Mark
+Page Reviewed…** in the app. Any edit to a page's geometry after sign-off
+automatically clears that page's review status (`Page.clear_review`,
+wired in `app/main_window.py`), since a prior approval no longer
+describes the current content. Exporting a document with unreviewed or
+low-confidence pages is still possible (a firm's process is theirs to
+define) but requires an explicit "export anyway" acknowledgment — see
+`export_drawing` in `app/main_window.py`.
+
+### 7.4 Audit trail
+
+`engine/audit.py` appends a local, timestamped, JSON-Lines log
+(`~/.digitalizer/audit_log.jsonl` for the desktop app; `<out>/audit_log.jsonl`
+for a batch CLI run) recording who (OS username) did what
+(digitized/reviewed/exported/saved/opened/invoked-AI-assist) and when.
+This is intentionally simple — local, unauthenticated, trivially
+editable by anyone with file access — a starting point a firm's IT/
+compliance function can point real log aggregation at, not a substitute
+for one.
+
+### 7.5 Firm's own CAD standard, not a bundled one
+
+See `docs/layer_standard.md` §"Using your own firm's CAD standard" —
+layer names/colors/lineweights load from a JSON config
+(**Settings → Load Firm CAD Standard…**) rather than being hardcoded, so
+onboarding this tool doesn't mean abandoning an existing standards
+manual or client-mandated layer scheme.
+
+### 7.6 Batch/unattended processing
+
+`python -m engine.pipeline <folder> --out <out>` digitizes every
+supported file in a folder unattended (optionally `--recursive`),
+continuing past any single corrupt/unreadable legacy file rather than
+aborting the run — the realistic way to work through a large scanned
+archive rather than uploading one drawing at a time through the GUI.

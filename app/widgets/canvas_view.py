@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 
 from app.tools.annotation_tools import build_annotation
 from app.tools.edit_tools import Tool, translate_points
-from engine.cad.layers import STRUCTURAL_LAYER_STANDARD
+from engine.cad.layer_registry import get_layer_standard
 from engine.model import Entity, EntitySource, EntityType, LayerCategory, Page
 
 ENTITY_ID_KEY = 0
@@ -54,7 +54,7 @@ def _confidence_color(confidence: float) -> QColor:
 
 
 def _pen_for_layer(layer: LayerCategory) -> QPen:
-    spec = STRUCTURAL_LAYER_STANDARD[layer]
+    spec = get_layer_standard()[layer]
     pen = QPen(QColor(spec.rgb_hex))
     pen.setWidthF(max(1.0, spec.lineweight_hundredth_mm / 12.0))
     pen.setStyle(Qt.PenStyle.DashLine if spec.linetype in ("DASHED", "CENTER") else Qt.PenStyle.SolidLine)
@@ -62,7 +62,7 @@ def _pen_for_layer(layer: LayerCategory) -> QPen:
 
 
 def _markup_pen() -> QPen:
-    pen = QPen(QColor(STRUCTURAL_LAYER_STANDARD[LayerCategory.USER_MARKUP].rgb_hex))
+    pen = QPen(QColor(get_layer_standard()[LayerCategory.USER_MARKUP].rgb_hex))
     pen.setStyle(Qt.PenStyle.DashLine)
     pen.setWidthF(2.0)
     return pen

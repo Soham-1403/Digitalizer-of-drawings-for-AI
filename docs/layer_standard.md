@@ -48,11 +48,45 @@ exported to DXF or drawn on the canvas.
    ACI index is a reasonable nearby standard-palette color for older
    viewers that ignore true-color.
 
-## Extending the standard
+## Using your own firm's CAD standard (no code changes needed)
+
+The table above is a sensible **default**, not a mandate. Most MNC
+structural/consulting firms already have their own CAD standards manual
+— their own layer names, colors, and lineweights, often required by a
+client contract or an internal BIM/CAD department — and this tool is
+meant to be pointed at that standard, not to impose its own.
+
+Every writer (DXF, PDF) and the canvas reads the *active* standard via
+`engine.cad.layer_registry.get_layer_standard()`, not the hardcoded
+Python dict directly. To use your firm's own standard:
+
+1. **Settings → Export CAD Standard Template…** writes the current
+   standard out as JSON (also available as `config/layer_standard.example.json`
+   in this repo) — edit the fields you want to change; anything you
+   leave out keeps its built-in default.
+2. **Settings → Load Firm CAD Standard…** loads that JSON and applies it
+   immediately, everywhere (open documents' canvas re-renders, and every
+   subsequent DXF/PDF export uses it) — no restart, no code change.
+
+Programmatically (e.g. for the batch/headless CLI):
+
+```python
+from engine.cad.layer_registry import load_layer_standard_from_file
+load_layer_standard_from_file("path/to/firm_standard.json")
+```
+
+A partial override file only needs the layers you're changing:
+
+```json
+{
+  "S-COLS": {"rgb_hex": "#101010", "lineweight_hundredth_mm": 70,
+             "description": "Columns per Firm CAD Standard §4.2"}
+}
+```
+
+## Adding an entirely new layer category
 
 Add a new `LayerCategory` member in `engine/model.py`, then add its
-`LayerSpec` (color/linetype/lineweight/description) to
-`STRUCTURAL_LAYER_STANDARD` in `engine/cad/layers.py`. Nothing else needs
-to change — the DXF writer, PDF writer, and canvas all read the same
-table, so a new layer is automatically colored/weighted consistently
-everywhere the moment it's added here.
+default `LayerSpec` to `STRUCTURAL_LAYER_STANDARD` in
+`engine/cad/layers.py`. Nothing else needs to change — the registry,
+writers, and canvas all key off the same enum.

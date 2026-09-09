@@ -11,7 +11,7 @@ from PySide6.QtCore import Signal
 from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import QCheckBox, QLabel, QVBoxLayout, QWidget
 
-from engine.cad.layers import STRUCTURAL_LAYER_STANDARD
+from engine.cad.layer_registry import get_layer_standard
 from engine.model import LayerCategory
 
 
@@ -24,15 +24,26 @@ class LayersPanel(QWidget):
         layout.addWidget(QLabel("<b>Layers</b>"))
 
         self._checkboxes: dict[LayerCategory, QCheckBox] = {}
-        for category, spec in STRUCTURAL_LAYER_STANDARD.items():
-            row = QCheckBox(f"{category.value} — {spec.description}")
+        for category in get_layer_standard():
+            row = QCheckBox()
             row.setChecked(True)
-            row.setIcon(_swatch_icon(spec.rgb_hex))
             row.toggled.connect(lambda checked, c=category: self.layerVisibilityChanged.emit(c, checked))
             layout.addWidget(row)
             self._checkboxes[category] = row
 
         layout.addStretch(1)
+        self.refresh_from_standard()
+
+    def refresh_from_standard(self) -> None:
+        """Re-read names/colors/descriptions from the active layer
+        standard — called after a firm loads their own CAD standard
+        config, so the panel reflects it without rebuilding the widget
+        (and without losing the current checked/visibility state).
+        """
+        for category, checkbox in self._checkboxes.items():
+            spec = get_layer_standard()[category]
+            checkbox.setText(f"{category.value} — {spec.description}")
+            checkbox.setIcon(_swatch_icon(spec.rgb_hex))
 
     def set_all_visible(self, visible: bool) -> None:
         for checkbox in self._checkboxes.values():

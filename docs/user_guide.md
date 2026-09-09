@@ -63,9 +63,36 @@ enabled).
 Use the **◀ Prev / Next ▶** buttons in the top toolbar. Each page is
 digitized and held independently — annotations and edits on one page
 never affect another. Page count and current position are shown between
-the nav buttons.
+the nav buttons, along with whether the current page has been reviewed.
 
-## 5. Saving your work
+## 5. Reviewing and signing off
+
+A confidence score is the pipeline's own estimate — it is not, and is
+not meant to be, an engineer's approval. Once you're satisfied a page is
+correct, click **Mark Page Reviewed…** in the top toolbar, enter your
+name and (optionally) notes. That page's status becomes "✓ reviewed by
+<name>."
+
+Editing the page afterward — moving/adding/deleting an entity, adding an
+annotation — automatically clears that page's review status, since the
+sign-off no longer describes the current content. You'll see a status
+bar message when this happens; just re-review before exporting.
+
+Exporting a document with unreviewed pages or open low-confidence
+detections is still possible — this tool doesn't dictate your firm's QA
+process — but it will show you exactly what's outstanding and ask you to
+explicitly confirm before proceeding.
+
+## 6. Using your firm's own CAD standard
+
+**Settings → Load Firm CAD Standard…** loads a JSON file describing your
+firm's layer names, colors, linetypes, and lineweights, and applies it
+immediately — to the open canvas and to every subsequent export. Nothing
+to restart, no code to touch. **Settings → Export CAD Standard
+Template…** writes the *current* standard out as a starting-point JSON
+file you can hand-edit. See `docs/layer_standard.md` for the file format.
+
+## 7. Saving your work
 
 **File → Save Project…** writes a single `.dgz` file containing the
 original page images, every digitized entity and annotation, and a
@@ -73,9 +100,11 @@ version history entry for this save. **File → Open Project…** reads it
 back exactly — including all your manual edits and markup — so you can
 resume later even without the original PDF/scan file.
 
-## 6. Exporting
+## 8. Exporting
 
-**File → Export…** lets you choose:
+**File → Export…** first checks every page's review/confidence status;
+if anything's outstanding, it tells you exactly what before you decide
+whether to proceed. Then choose:
 
 - **DXF** — always available. Real named layers, correct colors/
   lineweights, real-world units derived from the page DPI. Opens
@@ -87,7 +116,7 @@ resume later even without the original PDF/scan file.
   explanation if not). This app never bundles a proprietary DWG writer;
   see `engine/cad/dwg_export.py` and `ARCHITECTURE.md` for why.
 
-## 7. Tips for old / degraded drawings
+## 9. Tips for old / degraded drawings
 
 - If a page's overall confidence looks low, turn on the confidence
   heatmap first — it's usually one specific region (a stain, a fold, a

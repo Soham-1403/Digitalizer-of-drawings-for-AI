@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import os
 import tempfile
+from pathlib import Path
+from typing import Any
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QActionGroup
@@ -29,6 +31,7 @@ from app.widgets.layers_panel import LayersPanel
 from app.widgets.properties_panel import PropertiesPanel
 from app.widgets.upload_dialog import UploadDialog
 from app.workers import AiAssistWorker, PipelineWorker
+from engine.audit import default_log_path, log_event
 from engine.model import VectorDocument
 from engine.project.manager import load_project, save_project
 from engine.project.schema import Project
@@ -61,6 +64,7 @@ class MainWindow(QMainWindow):
         self._ai_worker: AiAssistWorker | None = None
         self._pipeline_config = None
         self._source_path: str = ""
+        self._audit_log_path = default_log_path(str(Path.home() / ".digitalizer"))
 
         self.canvas = CanvasView()
         self.setCentralWidget(self.canvas)
@@ -72,6 +76,15 @@ class MainWindow(QMainWindow):
         self._connect_canvas_signals()
 
         self._set_project_loaded(False)
+
+    def _log_audit_event(self, event_type: str, details: dict[str, Any]) -> None:
+        """Record a compliance-relevant event (see `engine/audit.py`).
+
+        Logged persistently to `~/.digitalizer/audit_log.jsonl` (not the
+        session's temp work dir, which is deleted on close) so the
+        record survives across sessions and projects.
+        """
+        log_event(self._audit_log_path, event_type, details)
 
     # ------------------------------------------------------------- menu
 
@@ -103,6 +116,16 @@ class MainWindow(QMainWindow):
         quit_action.triggered.connect(self.close)
         file_menu.addAction(quit_action)
 
+        settings_menu = self.menuBar().addMenu("&Settings")
+
+        load_standard_action = QAction("Load Firm CAD Standard…", self)
+        load_standard_action.triggered.connect(self.load_firm_cad_standard)
+        settings_menu.addAction(load_standard_action)
+
+        export_template_action = QAction("Export CAD Standard Template…", self)
+        export_template_action.triggered.connect(self.export_cad_standard_template)
+        settings_menu.addAction(export_template_action)
+
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Tools", self)
         toolbar.setOrientation(Qt.Orientation.Vertical)
@@ -129,6 +152,12 @@ class MainWindow(QMainWindow):
         nav.addWidget(prev_btn)
         nav.addWidget(self._page_label)
         nav.addWidget(next_btn)
+
+        nav.addSeparator()
+        review_btn = QPushButton("Mark Page Reviewed…")
+        review_btn.clicked.connect(self.mark_current_page_reviewed)
+        nav.addWidget(review_btn)
+
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, nav)
 
     def _build_docks(self) -> None:
@@ -205,6 +234,14 @@ class MainWindow(QMainWindow):
         self.current_page_index = 0
         self._set_project_loaded(True)
         self._show_page(0)
+        self._log_audit_event(
+            "digitized",
+            {
+                "source_file": self._source_path,
+                "page_count": len(document.pages),
+                "ai_assist_enabled": self._pipeline_config.ai_assist_enabled,
+            },
+        )
         self.statusBar().showMessage(f"Digitized {len(document.pages)} page(s).")
 
     def _on_pipeline_failed(self, message: str) -> None:
@@ -224,13 +261,37 @@ class MainWindow(QMainWindow):
             self.canvas.set_layer_visible(category, visible)
         self.confidence_panel.update_for_page(page)
         self.properties_panel.set_entity(None)
-        self._page_label.setText(f"Page {index + 1} / {len(self.document.pages)}")
+        self._update_page_label(page)
+
+    def _update_page_label(self, page) -> None:
+        review_status = f"✓ reviewed by {page.reviewed_by}" if page.is_reviewed else "not reviewed"
+        self._page_label.setText(
+            f"Page {self.current_page_index + 1} / {len(self.document.pages)} — {review_status}"
+        )
 
     def next_page(self) -> None:
         self._show_page(self.current_page_index + 1)
 
     def previous_page(self) -> None:
         self._show_page(self.current_page_index - 1)
+
+    def mark_current_page_reviewed(self) -> None:
+        page = self.canvas.current_page()
+        if not page:
+            QMessageBox.warning(self, "No page loaded", "Open a drawing first.")
+            return
+
+        from PySide6.QtWidgets import QInputDialog
+
+        reviewer, ok = QInputDialog.getText(self, "Mark Page Reviewed", "Reviewer name:")
+        if not ok or not reviewer.strip():
+            return
+        notes, _ = QInputDialog.getMultiLineText(self, "Mark Page Reviewed", "Review notes (optional):")
+
+        page.mark_reviewed(reviewer.strip(), notes.strip())
+        self._log_audit_event("page_reviewed", {"page_index": page.index, "reviewer": reviewer.strip()})
+        self._update_page_label(page)
+        self.statusBar().showMessage(f"Page {page.index + 1} marked reviewed by {reviewer.strip()}.")
 
     # -------------------------------------------------------- editing
 
@@ -241,6 +302,13 @@ class MainWindow(QMainWindow):
 
             page.overall_confidence = rollup_page_confidence([e.confidence for e in page.entities])
             self.confidence_panel.update_for_page(page)
+
+            if page.is_reviewed:
+                page.clear_review()
+                self._update_page_label(page)
+                self.statusBar().showMessage(
+                    "Page edited after sign-off — review status cleared; please re-review before export.", 6000
+                )
         self.setWindowTitle("Digitalizer of Drawings for AI — unsaved changes*")
 
     def _on_annotation_created(self, annotation) -> None:
@@ -266,6 +334,10 @@ class MainWindow(QMainWindow):
             return
 
         self.statusBar().showMessage("Reprocessing region with AI…")
+        self._log_audit_event(
+            "ai_assist_invoked",
+            {"page_index": page.index, "reason": "user-requested region reprocess"},
+        )
         self.setEnabled(False)
         self._ai_worker = AiAssistWorker(page, self._pipeline_config)
         self._ai_worker.finished_ok.connect(self._on_ai_assist_finished)
@@ -280,6 +352,35 @@ class MainWindow(QMainWindow):
             self.confidence_panel.update_for_page(page)
         self.statusBar().showMessage("AI assist finished." if ran else "AI assist did not run (provider unavailable).")
 
+    # ---------------------------------------------------- CAD standard
+
+    def load_firm_cad_standard(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Load Firm CAD Standard", "", "JSON (*.json)")
+        if not path:
+            return
+        from engine.cad.layer_registry import load_layer_standard_from_file
+
+        try:
+            load_layer_standard_from_file(path)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Could not load CAD standard", str(exc))
+            return
+
+        self.layers_panel.refresh_from_standard()
+        self.canvas.refresh()
+        self.statusBar().showMessage(f"Loaded CAD standard from {path}")
+
+    def export_cad_standard_template(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export CAD Standard Template", "layer_standard.json", "JSON (*.json)"
+        )
+        if not path:
+            return
+        from engine.cad.layer_registry import export_layer_standard_to_file
+
+        export_layer_standard_to_file(path)
+        self.statusBar().showMessage(f"Exported current CAD standard to {path}")
+
     # ------------------------------------------------------------- save
 
     def save_project_as(self) -> None:
@@ -292,6 +393,7 @@ class MainWindow(QMainWindow):
         self.project.document = self.document
         self.project.snapshot(note="Manual save")
         save_project(self.project, self.raster_paths, path)
+        self._log_audit_event("project_saved", {"path": path, "page_count": len(self.document.pages)})
         self.setWindowTitle("Digitalizer of Drawings for AI")
         self.statusBar().showMessage(f"Saved project to {path}")
 
@@ -307,14 +409,44 @@ class MainWindow(QMainWindow):
         self.current_page_index = 0
         self._set_project_loaded(True)
         self._show_page(0)
+        self._log_audit_event("project_opened", {"path": path})
         self.statusBar().showMessage(f"Opened project {path}")
 
     # ------------------------------------------------------------ export
+
+    def _confidence_threshold(self) -> float:
+        from engine.confidence.scoring import LOW_CONFIDENCE_THRESHOLD
+
+        if self._pipeline_config is not None:
+            return self._pipeline_config.confidence_threshold
+        return LOW_CONFIDENCE_THRESHOLD
 
     def export_drawing(self) -> None:
         if not self.document:
             QMessageBox.warning(self, "Nothing to export", "Open a drawing first.")
             return
+
+        from engine.review import evaluate_document_readiness
+
+        readiness = evaluate_document_readiness(self.document, self._confidence_threshold())
+        if not readiness.is_clean:
+            proceed = QMessageBox.warning(
+                self,
+                "Not all pages are review-ready",
+                "This export has open items:\n\n"
+                + "\n".join(readiness.summary_lines())
+                + "\n\nConfidence scores are the pipeline's own estimate, not an engineer's "
+                "sign-off. Export anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            self._log_audit_event(
+                "export_readiness_warning",
+                {"issues": readiness.summary_lines(), "proceeded": proceed == QMessageBox.StandardButton.Yes},
+            )
+            if proceed != QMessageBox.StandardButton.Yes:
+                return
+
         dialog = ExportDialog(self)
         if dialog.exec() != ExportDialog.DialogCode.Accepted:
             return
@@ -348,6 +480,16 @@ class MainWindow(QMainWindow):
             if not options.export_dxf:
                 os.remove(dxf_path)  # was only staged for the DWG conversion step
 
+        self._log_audit_event(
+            "exported",
+            {
+                "out_dir": options.out_dir,
+                "dxf": options.export_dxf,
+                "pdf": options.export_pdf,
+                "dwg": options.export_dwg,
+                "all_pages_reviewed": all(p.is_reviewed for p in self.document.pages),
+            },
+        )
         QMessageBox.information(self, "Export complete", "\n".join(messages) or "Nothing selected.")
 
     # ------------------------------------------------------------- misc

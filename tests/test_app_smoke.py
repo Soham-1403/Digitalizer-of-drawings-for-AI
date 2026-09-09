@@ -34,7 +34,7 @@ def test_main_window_loads_document_into_canvas(qapp, tmp_path, synthetic_drawin
 
     page = document.pages[0]
     assert len(window.canvas._entity_items) == len(page.entities)
-    assert window._page_label.text() == "Page 1 / 1"
+    assert window._page_label.text() == "Page 1 / 1 — not reviewed"
 
     # Layer visibility toggling shouldn't raise, and should hide items.
     window.canvas.set_layer_visible(LayerCategory.GRID, False)
@@ -95,5 +95,33 @@ def test_annotation_line_creates_locked_user_entity(qapp, tmp_path, synthetic_dr
     assert len(page.annotations) == 1
     locked_entities = [e for e in page.entities if e.locked and e.source == EntitySource.USER]
     assert locked_entities, "expected the annotation line to also create a locked USER entity"
+
+    window.close()
+
+
+def test_mark_reviewed_then_edit_clears_review(qapp, tmp_path, synthetic_drawing_bgr, monkeypatch):
+    from app.main_window import MainWindow
+    from PySide6.QtWidgets import QInputDialog
+
+    document, raster_paths = _build_document(tmp_path, synthetic_drawing_bgr)
+    window = MainWindow()
+    window._source_path = document.source_file
+    window._pipeline_config = PipelineConfig()
+    window._on_pipeline_finished(document, raster_paths)
+    page = document.pages[0]
+
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: ("J. Engineer", True)))
+    monkeypatch.setattr(QInputDialog, "getMultiLineText", staticmethod(lambda *a, **k: ("Looks good.", True)))
+
+    window.mark_current_page_reviewed()
+    assert page.is_reviewed
+    assert page.reviewed_by == "J. Engineer"
+    assert "reviewed by J. Engineer" in window._page_label.text()
+
+    from PySide6.QtCore import QPointF
+
+    window.canvas._finish_add_line(QPointF(10, 10), QPointF(50, 10))
+    assert not page.is_reviewed, "editing the page after sign-off should clear the review status"
+    assert "not reviewed" in window._page_label.text()
 
     window.close()

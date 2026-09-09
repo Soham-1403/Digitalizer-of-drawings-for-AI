@@ -192,12 +192,39 @@ class Page:
     skew_angle_deg: float = 0.0
     overall_confidence: Optional[float] = None
     notes: str = ""
+    reviewed_by: Optional[str] = None
+    reviewed_at: Optional[float] = None
+    review_notes: str = ""
 
     def entities_by_layer(self, layer: LayerCategory) -> list[Entity]:
         return [e for e in self.entities if e.layer == layer]
 
     def entities_below_confidence(self, threshold: float) -> list[Entity]:
         return [e for e in self.entities if e.confidence < threshold and not e.locked]
+
+    @property
+    def is_reviewed(self) -> bool:
+        return self.reviewed_by is not None
+
+    def mark_reviewed(self, reviewer: str, notes: str = "") -> None:
+        """Record an explicit human sign-off on this page's digitized
+        content. This is a deliberate, separate step from confidence
+        scoring — a reviewer might accept a page with some low-confidence
+        entities they've manually checked, and no automatic score should
+        substitute for that judgment on an engineering deliverable.
+        """
+        self.reviewed_by = reviewer
+        self.reviewed_at = time.time()
+        self.review_notes = notes
+
+    def clear_review(self) -> None:
+        """Invalidate sign-off — called whenever the page's geometry
+        changes after it was reviewed, since a prior approval no longer
+        describes the current content.
+        """
+        self.reviewed_by = None
+        self.reviewed_at = None
+        self.review_notes = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -211,6 +238,9 @@ class Page:
             "skew_angle_deg": self.skew_angle_deg,
             "overall_confidence": self.overall_confidence,
             "notes": self.notes,
+            "reviewed_by": self.reviewed_by,
+            "reviewed_at": self.reviewed_at,
+            "review_notes": self.review_notes,
         }
 
     @staticmethod
@@ -226,6 +256,9 @@ class Page:
             skew_angle_deg=d.get("skew_angle_deg", 0.0),
             overall_confidence=d.get("overall_confidence"),
             notes=d.get("notes", ""),
+            reviewed_by=d.get("reviewed_by"),
+            reviewed_at=d.get("reviewed_at"),
+            review_notes=d.get("review_notes", ""),
         )
 
 

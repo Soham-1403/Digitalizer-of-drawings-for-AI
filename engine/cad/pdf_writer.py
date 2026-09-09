@@ -19,7 +19,7 @@ from engine.cad.coords import (
     point_px_to_units,
     px_to_units_scale,
 )
-from engine.cad.layers import STRUCTURAL_LAYER_STANDARD
+from engine.cad.layer_registry import get_layer_standard
 from engine.model import Entity, EntityType, VectorDocument
 
 POINTS_PER_HUNDREDTH_MM = (1.0 / 100.0) * (72.0 / 25.4)
@@ -54,7 +54,7 @@ def _to_pt(point, page_height_px, scale, unit_factor):
 
 
 def _apply_layer_style(c: canvas.Canvas, entity: Entity, unit_factor: float) -> None:
-    spec = STRUCTURAL_LAYER_STANDARD[entity.layer]
+    spec = get_layer_standard()[entity.layer]
     color = HexColor(spec.rgb_hex)
     c.setStrokeColor(color)
     c.setFillColor(color)
