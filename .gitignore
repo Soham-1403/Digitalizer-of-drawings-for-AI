@@ -1,0 +1,26 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.env
+.pytest_cache/
+.coverage
+htmlcov/
+
+# User project data / large binaries — never commit real drawings
+projects/
+*.dgz
+*.pdf
+*.dxf
+*.dwg
+!tests/fixtures/**/*.pdf
+!tests/fixtures/**/*.dxf
+
+.DS_Store
+*.log
+.idea/
+.vscode/
